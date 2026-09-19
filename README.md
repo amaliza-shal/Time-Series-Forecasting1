@@ -97,6 +97,8 @@ Errors on the test week (Dec 16-22, 2013), one model per square. Lower is better
 
 **What I ran into and learned**
 
+- **Getting the data was hard.** The dataset is 20.8 GB, so I had to find flash disks to copy it to my computer before I could start.
+- **Notebook 2 takes a very long time.** It runs for about an hour, and every change to the models meant running it again.
 - **The SARIMA I planned was too slow.** SARIMA with a daily cycle of 144 steps did not finish after one hour. I replaced the seasonal part with sine and cosine terms, and it then took only a few seconds per fit.
 - **My first tuning was too quick to trust.** I first tuned the neural networks with only 5 training rounds, and this made a different model the best on one square. I repeated it with the same 20 rounds as the final training.
 - **Timings are noisy.** The same LSTM took about 61 s on two squares and 312 s on the third, so I only trust large differences.
