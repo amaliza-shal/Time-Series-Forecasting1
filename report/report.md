@@ -1,14 +1,10 @@
 # Mobile Network Traffic Forecasting on the Milan CDR Grid
 
-**Forecasting Internet traffic for the week of December 16-22, 2013, on the Milan Telecom
-Italia Call Detail Record (CDR) grid, using SARIMA, LSTM, and a hand-implemented Temporal
-Convolutional Network.**
+**One-step-ahead forecasting of Internet traffic for the week of December 16-22, 2013, on the Milan Telecom Italia CDR grid, with SARIMA, an LSTM and a TCN.**
 
 <div class="titlemeta">
-Data: Milan Telecom Italia Big Data Challenge CDR grid, Nov 1, 2013 - Jan 1, 2014, 10-minute
-intervals, 10,000 grid squares [1].<br>
-Evaluation target: walk-forward one-step-ahead forecasts, Dec 16-22, 2013, top-3 squares by
-total traffic.
+Data: Telecom Italia CDR grid of Milan, Nov 1, 2013 - Jan 1, 2014, 10-minute intervals, 10,000 grid squares [1].<br>
+Evaluation: walk-forward one-step-ahead forecasts for Dec 16-22, 2013 on the three busiest squares.
 </div>
 
 <div style="page-break-after: always;"></div>
@@ -16,107 +12,89 @@ total traffic.
 
 # Introduction
 
-Mobile network operators need short-horizon traffic forecasts to drive capacity planning, load
-balancing, and energy-saving decisions (e.g. sleeping under-used cells overnight). This report
-addresses a concrete version of that problem: **how do different sequential forecasting models
-compare for one-step-ahead mobile network traffic forecasting, and how does their performance
-vary across geographical areas with different traffic characteristics?**
+Mobile network operators use short-term traffic forecasts for capacity planning and load balancing. This report looks at one-step-ahead forecasting of Internet traffic on the Milan Telecom Italia CDR grid [1] and asks: **how do different sequential models compare for one-step-ahead mobile traffic forecasting, and how does their performance vary across areas with different traffic characteristics?**
 
-The dataset is the Milan Telecom Italia Call Detail Record (CDR) grid [1]: the city of Milan is
-partitioned into 10,000 squares, and for each square and each 10-minute interval the data
-records SMS, call, and Internet traffic volumes, from November 1, 2013 to January 1, 2014. This
-report forecasts **Internet traffic**, one square at a time, for the week of **December 16-22,
-2013**, using three architecturally distinct models - a classical statistical model (SARIMA), a
-recurrent neural network (LSTM), and a hand-implemented convolutional model (a Temporal
-Convolutional Network, TCN) - trained and evaluated independently on the three highest-traffic
-squares in the grid.
+The data covers 10,000 grid squares of Milan at 10-minute resolution from Nov 1, 2013 to Jan 1, 2014. I forecast the Internet traffic of each of the three busiest squares over the week of Dec 16-22, 2013 with three models from different families: SARIMA (statistical), an LSTM (recurrent) and a TCN (convolutional) written from scratch. Every prediction uses only true past observations (walk-forward evaluation).
 
-The work is organized as two notebooks that this report mirrors section-for-section: the first
-covers data preparation and exploratory analysis, establishing the traffic characteristics
-(seasonality, volatility, stationarity) that motivate the modeling choices; the second covers
-methodology, model implementation, and results, ending with a walk-forward evaluation that
-conditions every one-step prediction on true past observations. The remainder of this report
-follows that structure: Related Work reviews the literature the model choices are grounded in;
-Dataset and Data Preparation describes the data and the memory-efficient loading strategy used
-to process it; Exploratory Analysis characterizes the traffic patterns across squares; Methodology
-details each model's design, input representation, and tuning; Results and Discussion reports
-walk-forward forecasting performance, timing, and a specific failure case; and Conclusion and
-Future Work synthesizes the comparison and discusses what a next iteration would improve.
+The report follows the two notebooks in the repository [6]. Related Work lists the literature used. Dataset and Data Preparation describes the memory-efficient loading. Exploratory Analysis looks at the traffic patterns of the squares in time and space. Methodology describes the models and how they were tuned. Results and Discussion gives the errors, the timings and one failure case. The Conclusion summarizes the findings and what could be done next.
 
 <div style="page-break-after: always;"></div>
 
 
 # Related Work
 
-Five sources anchor the model choices below, each tied to a specific finding from Notebook 1's exploratory analysis.
+The five sources below motivated the data used, the choice of models and the future work.
 
-[1] G. Barlacchi, M. De Nadai, R. Larcher, et al., "A multi-source dataset of urban life in the city of Milan and the Province of Trentino," *Scientific Data*, vol. 2, no. 150055, 2015. — Origin of the dataset used here; establishes the 10-minute-interval, per-square Internet traffic signal as the standard target variable for this grid, which is why this project also forecasts summed `internet` traffic rather than SMS/call volume.
+[1] G. Barlacchi, M. De Nadai, R. Larcher, et al., "A multi-source dataset of urban life in the city of Milan and the Province of Trentino," *Scientific Data*, vol. 2, no. 150055, 2015. Describes the Telecom Italia dataset used here (telecommunications, weather, news, social network and electricity data for Milan and Trentino).
 
-[2] A. Azari, P. Papapetrou, S. Denic, and G. Peters, "Cellular Traffic Prediction and Classification: A Comparative Evaluation of LSTM and ARIMA," in *Proc. 22nd Int. Conf. Discovery Science (DS)*, Split, Croatia, 2019, pp. 129-144. — Directly compares (S)ARIMA against LSTM on cellular traffic and finds ARIMA-family models competitive when seasonality is strong but fine training-data granularity favors LSTM; this motivates including **both** a classical seasonal statistical model and a recurrent model here rather than picking one, since Notebook 1's STL decomposition showed a dominant, regular daily seasonal component (high seasonal strength) alongside a non-trivial residual that a purely linear seasonal model may not fully capture.
+[2] A. Azari, P. Papapetrou, S. Denic, and G. Peters, "Cellular Traffic Prediction and Classification: A Comparative Evaluation of LSTM and ARIMA," in *Proc. 22nd Int. Conf. Discovery Science (DS)*, Split, Croatia, 2019, pp. 129-144. Compares LSTM and ARIMA on cellular traffic. It finds LSTM better in general, especially with large and fine-grained training data, while ARIMA comes close in some cases at a much lower cost. This is why the project compares a classical model with a recurrent one instead of using only one of them.
 
-[3] W. Wang, C. Zhou, H. He, W. Wu, W. Zhuang, and X. Shen, "Cellular Traffic Load Prediction with LSTM and Gaussian Process Regression," in *Proc. IEEE Int. Conf. Commun. (ICC)*, Dublin, Ireland, Jun. 2020, pp. 1-6. — Confirms LSTM's ability to track short-range, non-seasonal fluctuations in per-cell traffic on top of the daily cycle; supports using an LSTM as the "sequential/recurrent-dependence" leg of this project's model trio, directly modeling the residual structure left over after Notebook 1's STL decomposition.
+[3] W. Wang, C. Zhou, H. He, W. Wu, W. Zhuang, and X. Shen, "Cellular Traffic Load Prediction with LSTM and Gaussian Process Regression," in *Proc. IEEE Int. Conf. Commun. (ICC)*, Dublin, Ireland, Jun. 2020, pp. 1-6. Combines an LSTM with Gaussian process regression to predict single-cell traffic on the Milan data, which supports using an LSTM for each square here.
 
-[4] C. Zhang and P. Patras, "Long-Term Mobile Traffic Forecasting Using Deep Spatio-Temporal Neural Networks," in *Proc. ACM MobiHoc*, Los Angeles, CA, 2018, pp. 231-240. — Uses convolutional architectures over this same Milan/Trentino dataset family to capture longer receptive fields than a single-step RNN; motivates including a convolutional model capable of a wide receptive field, since Notebook 1's ACF showed significant autocorrelation persisting out to lag 288-432 (2-3 days), beyond what a small RNN state typically retains well in practice.
+[4] C. Zhang and P. Patras, "Long-Term Mobile Traffic Forecasting Using Deep Spatio-Temporal Neural Networks," in *Proc. ACM MobiHoc*, Los Angeles, CA, 2018, pp. 231-240. Proposes a deep spatio-temporal neural network for network-wide mobile traffic forecasting, evaluated on real traffic data collected over 60 days. It models many areas jointly, which this project does not do (see the Conclusion).
 
-[5] S. Bai, J. Z. Kolter, and V. Koltun, "An Empirical Evaluation of Generic Convolutional and Recurrent Networks for Sequence Modeling," *arXiv:1803.01271*, 2018. — Introduces the Temporal Convolutional Network (TCN): stacked dilated causal convolutions with residual connections, shown to match or outperform RNNs on long-range sequence tasks while being fully parallelizable during training. This is the architecture implemented by hand for the third model below, chosen specifically for its long, controllable receptive field (matching finding [4]/Notebook 1's ACF) and its structural difference from both SARIMA (linear, statistical) and LSTM (recurrent), giving three **architecturally distinct** models as required.
+[5] S. Bai, J. Z. Kolter, and V. Koltun, "An Empirical Evaluation of Generic Convolutional and Recurrent Networks for Sequence Modeling," *arXiv:1803.01271*, 2018. Introduces the TCN (stacked dilated causal convolutions with residual connections) and reports that it outperforms canonical recurrent networks such as LSTMs on a range of sequence tasks, with longer effective memory. The third model here is a TCN written from scratch.
 
 <div style="page-break-after: always;"></div>
 
 
 # Dataset and Data Preparation
 
-**Source.** The Milan Telecom Italia CDR grid dataset (Telecom Italia Big Data Challenge [1]) partitions the city of Milan into a 100×100 grid of 10,000 squares. For each square and each 10-minute interval, the raw files record per-country SMS-in, SMS-out, call-in, call-out and Internet traffic volumes.
+**Source.** The Milan Telecom Italia CDR dataset [1] splits the city into a 100×100 grid of 10,000 squares. For each square and 10-minute interval, the raw files give SMS-in, SMS-out, call-in, call-out and Internet traffic per country code.
 
-**Target variable.** This project forecasts **Internet traffic** volume per square — the `internet` column — summed across all `country_code` rows sharing the same `(square_id, timestamp)`. This matches the target variable used throughout the mobile/cellular traffic forecasting literature built on this dataset (e.g. [2], [3], [4]).
+**Target.** The forecasting target is Internet traffic: the `internet` column, summed over all `country_code` rows with the same `(square_id, timestamp)`.
 
-**Schema** (tab-separated, no header row): `square_id, timestamp_ms (epoch millis), country_code, sms_in, sms_out, call_in, call_out, internet`. Most fields are frequently missing (`NaN`) on any given row — a square/interval/country combination only has an entry for the activity types actually observed.
+**Schema.** Tab-separated, no header: `square_id, timestamp_ms (epoch millis), country_code, sms_in, sms_out, call_in, call_out, internet`. Many fields are empty on any given row, since a row only has values for the activity types that were observed.
 
-**Files on disk.** One file per calendar day. Confirmed below before doing anything else, since the assignment requires forecasting the week of **Dec 16–22, 2013**.
+**Files.** There is one file per day. A check confirms that the files for the Dec 16–22 test week are present.
 
-## Two-pass, chunked, memory-efficient loading
+## Two-pass chunked loading
 
-The raw corpus is **~20 GB across 62 files** (a single day is already ~340 MB / ~5.3M rows). Reading any one file fully with a plain `pd.read_csv(...)` (all columns, no chunking) already costs a large, immediate jump in process memory — and doing that for all 62 files at once is not something a typical laptop can hold in RAM simultaneously.
+The raw data is about 20 GB in 62 files (one day is ~340 MB, ~5.3M rows). Reading even one file in full with `pd.read_csv` uses a lot of memory, and all 62 together would not fit in the 7.7 GB of RAM of the machine used (see the hardware line in notebook 2). Instead the files are read in two passes, one file at a time in chunks of 2,000,000 rows, with `usecols` so unused columns are never parsed:
 
-The loading strategy therefore uses **two chunked passes**, each processing one file at a time in fixed-size row chunks (`chunksize=2,000,000`) so peak memory stays roughly constant regardless of total corpus size:
+1. **Pass 1 (ranking)** reads `square_id` and `internet` from every file and keeps a running total per square. This gives the ranking of all 10,000 squares.
+2. **Pass 2 (extraction)** reads `square_id`, `timestamp_ms` and `internet` and keeps only the top-3 squares from Pass 1 plus squares 4159 and 4556, which are then rebuilt as full 10-minute series.
 
-1. **Pass 1 (ranking scan)** — reads only `square_id` and `internet` from every file, accumulating a running per-square total. Output: a full ranking of all 10,000 squares by total Internet traffic.
-2. **Pass 2 (extraction scan)** — reads only `square_id`, `timestamp_ms`, `internet` from every file, keeping just the handful of squares selected from Pass 1's ranking plus two squares of interest, and reconstructs their full-resolution time series.
+**Trade-offs.** Reading the data twice roughly doubles the I/O time. A single pass is not possible here because the squares to extract are only known once the ranking is finished, and extracting many candidate squares up front would bring back the memory problem. The chunk size is fixed rather than tuned to the available RAM. Memory is also measured after each stage, not at its peak, so the real peak is higher than the table below shows.
 
-Both passes use `usecols` to skip parsing the unused columns entirely, which is both faster and lighter on memory than reading full rows.
+**Size of one day's DataFrame (about 5.3M rows):**
 
-**Trade-offs of this approach.** The two-pass design is not free: it reads the full ~20 GB corpus from disk **twice** (once to rank, once to extract), roughly doubling total I/O time compared to a single combined pass that computed both the ranking and a running extraction buffer simultaneously. That single-pass alternative was not used here because it would require deciding which squares to extract *before* the ranking scan that determines them - a chicken-and-egg problem - or extracting a much larger speculative set of squares and filtering afterward, which reintroduces the memory pressure this design avoids. The `chunksize=2,000,000` value is also fixed rather than adaptive to available system memory; a smaller chunk size would lower peak memory further at the cost of more chunking overhead, and a production system would likely tune this against actual available RAM. Finally, the RSS measurements below capture memory *after* each stage completes, not the peak reached mid-chunk, so they are a conservative lower bound on the true peak footprint.
-
-**Memory measured at each stage of the loading pipeline:**
-
-
-| Stage                                                                                       |   RSS (MB) | Elapsed (s)   |   Delta vs baseline (MB) |
-|:--------------------------------------------------------------------------------------------|-----------:|:--------------|-------------------------:|
-| baseline (imports only)                                                                     |    204.400 | -             |                    0.000 |
-| naive full single-file load (sms-call-internet-mi-2013-11-01.txt, all columns, no chunking) |    500.800 | 3.8           |                  296.400 |
-| after chunked Pass 1 (ranking scan, all 62 files, 2 cols)                                   |    150.100 | 191.7         |                  -54.300 |
-| after chunked Pass 2 (extraction scan, all 62 files, 3 cols)                                |    170.900 | 154.9         |                  -33.500 |
-
-**Discussion.** The measured numbers confirm the concern: the naive single-file load (one of 62 files, ~340 MB on disk) pulled RSS from 204.4 MB to 500.8 MB - a **+296.4 MB** jump from a single file in 3.8s. The two chunked passes, by contrast, each scan the *entire* ~20 GB corpus (62 files) yet leave RSS *below* the naive-load level throughout: Pass 1 (ranking scan, 191.7s) finished at 150.1 MB - **54.3 MB below** the pre-pass baseline once transient chunk buffers were freed - and Pass 2 (extraction scan, 154.9s) finished at 170.9 MB, **33.5 MB below** baseline. In other words, chunked processing of the full corpus left resident memory lower than it started, while a naive load of a single day's file alone added nearly 300 MB. (These exact RSS/timing figures vary somewhat run-to-run with system load, as they are live OS memory measurements rather than deterministic outputs - but the qualitative gap, a few-hundred-MB jump from one naive load versus a flat-or-negative delta from scanning the full corpus in chunks, is consistent across runs.) This is the load-bearing design decision that makes the rest of the pipeline tractable: Pass 1 turns the full 20 GB corpus into a single ranking table, and Pass 2 turns it into one small Parquet file that Notebook 2 works from entirely in memory, without ever opening a raw `.txt` file again.
+| Columns and dtypes read                 |   DataFrame size (MB) |   Reduction (%) |
+|:----------------------------------------|----------------------:|----------------:|
+| all 8 columns, default dtypes           |                   296 |               0 |
+| Pass 1 columns (2), int32/float32       |                    37 |              87 |
+| Pass 2 columns (3), int32/int64/float32 |                    74 |              75 |
 
 
-**Top 10 squares by total Internet traffic (Nov 1, 2013 - Jan 1, 2014):**
+**Process memory (RSS) at each stage of the loading:**
+
+| Stage                                                                                       |   RSS (MB) |   Elapsed (s) |   Delta vs baseline (MB) |
+|:--------------------------------------------------------------------------------------------|-----------:|--------------:|-------------------------:|
+| baseline (imports only)                                                                     |      204.0 |             - |                     +0.0 |
+| naive full single-file load (sms-call-internet-mi-2013-11-01.txt, all columns, no chunking) |      500.4 |           3.2 |                   +296.4 |
+| after chunked Pass 1 (ranking scan, all 62 files, 2 cols)                                   |      217.6 |         136.4 |                    +13.6 |
+| after chunked Pass 2 (extraction scan, all 62 files, 3 cols)                                |      232.2 |         154.8 |                    +28.2 |
 
 
-|   rank |   square_id |   total_internet_traffic |
-|-------:|------------:|-------------------------:|
-|  1.000 |    5161.000 |             12740060.318 |
-|  2.000 |    5059.000 |             11170854.430 |
-|  3.000 |    5259.000 |             10485779.535 |
-|  4.000 |    5061.000 |              9584334.402 |
-|  5.000 |    5258.000 |              8707440.215 |
-|  6.000 |    5159.000 |              8703872.871 |
-|  7.000 |    6064.000 |              8675342.598 |
-|  8.000 |    4855.000 |              8491044.402 |
-|  9.000 |    4856.000 |              8230212.148 |
-| 10.000 |    5262.000 |              8163357.066 |
+**Discussion.** Loading one day's file in full raised RSS from 204.0 MB to 500.4 MB (+296.4 MB, 3.2 s). Each chunked pass reads all 62 files and stays close to the starting level: Pass 1 (136.4 s) ends at 217.6 MB and Pass 2 (154.8 s) at 232.2 MB, which is 13.6 MB and 28.2 MB above the baseline. These are live memory and timing measurements and change from run to run. Across five runs of this notebook (four in the git history and the latest), the naive load added 280–297 MB while the chunked passes ended between 54 MB below and 28 MB above the baseline (the negative values are probably memory released by `gc.collect()`; I did not investigate). Independently of chunking, reading only the needed columns with smaller dtypes shrinks one day's DataFrame from 296 MB (all 8 columns) to 37 MB for the Pass 1 columns and 74 MB for the Pass 2 columns (87% and 75% smaller; see the cell above), so most of the reduction comes from column selection and dtypes and chunking then keeps the footprint independent of the number of files. The two passes leave a ranking table and one small parquet file, which is all notebook 2 needs.
+
+**Ten busiest squares by total Internet traffic (Nov 1, 2013 - Jan 1, 2014):**
+
+| Rank   |   Square |   Total Internet traffic |
+|:-------|---------:|-------------------------:|
+| 1      |     5161 |               12,740,060 |
+| 2      |     5059 |               11,170,854 |
+| 3      |     5259 |               10,485,780 |
+| 4      |     5061 |                9,584,334 |
+| 5      |     5258 |                8,707,440 |
+| 6      |     5159 |                8,703,873 |
+| 7      |     6064 |                8,675,343 |
+| 8      |     4855 |                8,491,044 |
+| 9      |     4856 |                8,230,212 |
+| 10     |     5262 |                8,163,357 |
 
 
-The **top-3 squares** carried forward into the rest of this report are **5161, 5059, and 5259**. Two additional landmark squares, **4159** and **4556**, are also examined in the Exploratory Analysis section below.
+The top-3 squares used in the rest of the report are **5161, 5059 and 5259**. Squares **4159** and **4556** are also examined in the exploratory analysis.
 
 
 <div style="page-break-after: always;"></div>
@@ -127,60 +105,90 @@ The **top-3 squares** carried forward into the rest of this report are **5161, 5
 ## Distribution of total traffic across all squares
 
 
-<div class="figure"><img src="../figures/eda_traffic_distribution.png" style="width:90%;"></div>
+<div class="figure"><img src="../figures/eda_traffic_distribution.png" width="470"></div>
 
 
-**Discussion.** Total traffic is heavily right-skewed across the grid: a small number of central, high-density squares (containing transit hubs, business districts and stadiums) account for a disproportionate share of total Internet traffic, while the majority of the 10,000 squares — many of which cover low-density outskirts — carry comparatively little. On a log scale the distribution is much closer to unimodal, consistent with a multiplicative, population/land-use-driven process rather than a uniform spread of activity across the city grid. This skew is the direct motivation for concentrating both the EDA and the modeling on a handful of high-traffic squares (the top-3) rather than the full grid — they are where forecasting accuracy matters most in absolute terms.
+**Discussion.** Total traffic per square is strongly right-skewed: most squares are near the low end and a few carry much more (the busiest square has about 1.27e7 in total, see the ranking above). On a log scale the distribution looks roughly bell-shaped, centered around 10^5.5. The rest of the project uses only the three busiest squares.
 
-## Time series for the top-3 squares and the two landmark squares (first two weeks)
+## Spatial layout of the traffic
 
-The first two weeks of the observation window (Nov 1–14, 2013) are plotted below at native 10-minute resolution, first for the top-3 squares by total traffic, then for squares 4159 and 4556.
-
-
-<div class="figure"><img src="../figures/eda_timeseries_top3_first2weeks.png" style="width:90%;"></div>
+The 10,000 squares form a 100×100 grid. Assuming the ids run along rows of 100 squares, square `id` is at row `(id - 1) // 100` and column `(id - 1) % 100`. The map shows the total traffic per square with the top-3 squares and squares 4159 and 4556 marked.
 
 
-**Discussion.** All three top squares show a strong, regular daily cycle (a broad daytime peak and a deep overnight trough) superimposed on a clear weekly pattern distinguishing weekdays from the Nov 2–3 and Nov 9–10 weekends. The three series are highly correlated in shape but differ substantially in amplitude, consistent with their ranking — they are simply busier or quieter versions of the same underlying diurnal rhythm. This regularity is encouraging for forecasting: a model that captures daily and weekly seasonality should already explain most of the variance for these squares.
+<div class="figure"><img src="../figures/eda_spatial_traffic_map.png" width="330"></div>
 
 
-<div class="figure"><img src="../figures/eda_timeseries_landmarks_first2weeks.png" style="width:90%;"></div>
+**Correlation of the 10-minute series (Nov 1 - Jan 1):**
+
+| Square   |   5161 |   5059 |   5259 |   4159 |   4556 |
+|:---------|-------:|-------:|-------:|-------:|-------:|
+| 5161     |   1.00 |   0.88 |   0.47 |   0.49 |   0.39 |
+| 5059     |   0.88 |   1.00 |   0.76 |   0.77 |   0.40 |
+| 5259     |   0.47 |   0.76 |   1.00 |   0.90 |   0.30 |
+| 4159     |   0.49 |   0.77 |   0.90 |   1.00 |   0.39 |
+| 4556     |   0.39 |   0.40 |   0.30 |   0.39 |   1.00 |
 
 
-**Discussion.** Squares 4159 and 4556 sit well below the top-3 in absolute traffic (mean ~311 and ~592 vs. 1,292-1,484 for the top-3, over the first two weeks) but still display the same daily/weekly seasonal shape. The more interesting difference is in **relative volatility**: square 5161 (the top-1 square) has a coefficient of variation of 0.88 and a peak-to-mean ratio of ~5.4x, versus 0.43 and ~3.2x for square 4556 - i.e. 5161's daily swing is proportionally much sharper, not just larger in absolute terms. This is the same pattern the STL decomposition below quantifies as a high seasonal strength (0.858) for 5161, and it foreshadows a concrete modeling finding in Notebook 2: the LSTM specifically underperforms on square 5161 relative to SARIMA, plausibly because tracking a sharper, higher-amplitude daily peak is harder for a fixed-capacity recurrent model to learn than it is for a model handed the seasonal shape directly (SARIMA's Fourier terms). Lower-volume squares like 4159 are also typically harder to forecast in *relative* (MAPE) terms even when absolute errors are small, since their trough values sit closer to zero.
+**Discussion.** Traffic is concentrated in space: the 100 busiest squares (1% of the grid) carry 11% of the total and the 1,000 busiest (10%) carry 48%, and the high-traffic squares form a compact area in the middle of the map. The three busiest squares are close together, at (row, column) (50, 58) for 5059, (51, 60) for 5161 and (52, 58) for 5259. Square 4159 is at (41, 58), 11 rows below 5259, and 4556 is at (45, 55).
+
+Being close does not mean behaving alike. Square 5161 is the same distance from 5059 and from 5259 (1 row and 2 columns), yet its series correlates at 0.88 with 5059 and only 0.47 with 5259, while 5259 and 4159, 11 rows apart, correlate at 0.90. This follows the weekend behaviour seen in the time series plots: between Nov 1 and Dec 15 the correlation of 5161 with 5259 is 0.84 on weekdays and -0.05 on weekends, and with 5059 it is 0.93 and 0.95. I did not check what is located at these squares, so I can only say that 5259 and 4159 look like areas used mainly on working days and 5161 does not.
+
+## Time series for the top-3 squares and squares 4159 and 4556 (first two weeks)
+
+Nov 1–14, 2013 at 10-minute resolution: first the three busiest squares, then 4159 and 4556.
+
+
+<div class="figure"><img src="../figures/eda_timeseries_top3_first2weeks.png" width="470"></div>
+
+
+**Discussion.** All three squares have a daily cycle with a low overnight trough (a few hundred) and a daytime peak. On weekdays (Nov 4–8 and 11–14) they look alike, with peaks of roughly 3,000–4,000. On weekends (Nov 2–3 and 9–10) they behave very differently: square 5161 has its highest peaks of the two weeks (about 5,000, and 8,044 on Saturday Nov 2), 5059 peaks around 2,000–2,800, and 5259 stays close to 500. Nov 1 (a Friday and a public holiday in Italy) also looks like a weekend day. So the squares differ in their weekly pattern and not only in size, and the models in notebook 2 need a weekly component (day-of-week features for the LSTM and TCN, weekly Fourier terms for SARIMA).
+
+
+<div class="figure"><img src="../figures/eda_timeseries_landmarks_first2weeks.png" width="470"></div>
+
+
+**Summary of the first two weeks (CV = coefficient of variation):**
+
+| Square   |   Mean |   Max |   CV |   Peak / mean |   Weekday mean |   Weekend mean | Time of maximum   |
+|:---------|-------:|------:|-----:|--------------:|---------------:|---------------:|:------------------|
+| 5161     |   1484 |  8044 | 0.88 |           5.4 |           1381 |           1740 | Nov 02 12:50      |
+| 5059     |   1331 |  4183 | 0.72 |           3.1 |           1424 |           1098 | Nov 12 13:40      |
+| 5259     |   1292 |  4263 | 0.88 |           3.3 |           1599 |            527 | Nov 08 12:40      |
+| 4159     |    311 |   851 | 0.61 |           2.7 |            361 |            187 | Nov 04 17:10      |
+| 4556     |    592 |  1869 | 0.43 |           3.2 |            577 |            627 | Nov 09 21:10      |
+
+
+**Discussion.** Squares 4159 and 4556 carry much less traffic than the top three (means of 311 and 592 over these two weeks, against 1,292–1,484; see the table above). 4159 is a weekday square: it sits at about 150–250 on weekends and on Nov 1 and reaches about 700–800 on weekdays. 4556 has a daily cycle every day, is noisier, and its largest peak (1,869) is on Saturday Nov 9 at 21:10; I did not look into what caused it.
+
+The table also shows how volatility differs between squares. Square 5161 has a coefficient of variation of 0.88 and a peak-to-mean ratio of 5.4, against 0.43 and 3.2 for 4556 (5059: 0.72 and 3.1, 5259: 0.88 and 3.3, 4159: 0.61 and 2.7). Squares 5161 and, slightly, 4556 are busier on weekends; the other three are busier on weekdays (5059: 1,424 vs 1,098, 5259: 1,599 vs 527, 4159: 361 vs 187). In notebook 2, 5161 is the square where the LSTM does worst compared with SARIMA.
 
 ## STL decomposition of the top-1 square
 
-Seasonal-Trend decomposition using LOESS (STL), with a period of 144 (one day at 10-minute resolution), applied to the full Nov 1 - Jan 1 series of the single highest-traffic square.
+STL with a period of 144 (one day) on the full Nov 1 – Jan 1 series of square 5161.
 
 
-<div class="figure"><img src="../figures/eda_stl_top1.png" style="width:90%;"></div>
+<div class="figure"><img src="../figures/eda_stl_top1.png" width="470"></div>
 
 
+| Square   |   Seasonal strength |   Trend strength |
+|:---------|--------------------:|-----------------:|
+| 5161     |               0.858 |            0.238 |
 
-**STL decomposition strength (square 5161):**
 
-
-| square      |   seasonal_strength |   trend_strength |
-|:------------|--------------------:|-----------------:|
-| square_5161 |               0.858 |            0.238 |
-
-**Discussion.** The STL decomposition confirms what the raw time series plot already suggested: the daily seasonal component dominates the series, while the trend component is comparatively smooth and slow-moving over the two-month window (with visible dips around lower-activity periods, e.g. late-November/December). The residual component is small relative to the seasonal amplitude, meaning that a model which explicitly captures the 144-step daily cycle — as SARIMA and, implicitly, the windowed deep models below do — should be able to explain the bulk of this square's variance; the remaining forecasting difficulty lives mostly in the residual, i.e. in short-lived deviations from the typical daily rhythm.
+**Discussion.** The seasonal component is large and regular (seasonal strength 0.858, trend strength 0.238). The trend stays between about 1,300 and 1,750 until roughly Dec 22 and then drops sharply towards the end of the year, and the residual has its largest negative values around Dec 25–26, when the daily peaks are far below the usual pattern. The drop starts close to the end of the Dec 16–22 test week. Outside the holiday period most of the variance is explained by the daily cycle, so the remaining error comes from deviations from that pattern.
 
 ## Stationarity and autocorrelation structure of the top-1 square (ACF, PACF, ADF)
 
 
-<div class="figure"><img src="../figures/eda_acf_pacf_top1.png" style="width:90%;"></div>
+<div class="figure"><img src="../figures/eda_acf_pacf_top1.png" width="470"></div>
 
 
+| Square   |   ADF statistic |   p-value |   Lags used |   Observations |   Critical 1% |   Critical 5% |   Critical 10% |
+|:---------|----------------:|----------:|------------:|---------------:|--------------:|--------------:|---------------:|
+| 5161     |         -19.028 |     0.000 |          36 |           8891 |        -3.431 |        -2.862 |         -2.567 |
 
-**Augmented Dickey-Fuller test (square 5161):**
 
-
-| square      |   adf_statistic |   p_value |   n_lags_used |   n_obs |   crit_1% |   crit_5% |   crit_10% |
-|:------------|----------------:|----------:|--------------:|--------:|----------:|----------:|-----------:|
-| square_5161 |         -19.028 |     0.000 |            36 |    8891 |    -3.431 |    -2.862 |     -2.567 |
-
-**Discussion.** The ACF shows pronounced peaks at lag 144 and its multiples (288, 432, ...), directly confirming the strong daily periodicity already visible in the raw series and the STL seasonal component. The PACF cuts off much faster, indicating that most of the short-range predictive signal is concentrated in the most recent few lags once the daily seasonal pattern is accounted for — informing the choice of a modest non-seasonal AR order for SARIMA. The ADF test rejects the unit-root null hypothesis at conventional significance levels (see `p_value` above), i.e. the series is statistically stationary around its seasonal pattern; this justifies fitting SARIMA directly on the raw series (with a seasonal order term) rather than requiring additional non-seasonal differencing.
+**Discussion.** The ACF has strong peaks at lag 144 and its multiples (0.878 at 144, 0.770 at 288, 0.741 at 432), which confirms the daily cycle. The ACF at lag 1008 (one week) is 0.838, almost as high as at lag 144, so the weekly pattern repeats nearly as strongly as the daily one; the STL decomposition above only removes the daily period. The PACF is large at lags 1 and 2 (0.987 and 0.259) and small afterwards (about -0.15 at lags 4–6), which points to a low AR order. The ADF test rejects the unit root (statistic -19.0, p < 0.001), so the series is stationary in that sense and does not need differencing to remove a trend. In notebook 2 the order with d=1, `(2,1,1)`, has the lowest AIC on all three squares.
 
 <div style="page-break-after: always;"></div>
 
@@ -188,87 +196,105 @@ Seasonal-Trend decomposition using LOESS (STL), with a period of 144 (one day at
 # Methodology
 
 
-**Resulting model trio and rationale, tied to Notebook 1's EDA:**
-- **SARIMA** — classical statistical baseline; directly encodes the strong 144-step (daily) seasonality Notebook 1's STL/ACF analysis found dominant.
-- **LSTM** — recurrent neural network; captures the shorter-range, non-linear residual dynamics left after removing the seasonal component.
-- **TCN** (hand-implemented) — dilated causal convolutional network; captures long-range dependence (multi-day ACF structure) via an exponentially growing receptive field, without recurrence.
+**Model choice.** The three models come from different families (statistical, recurrent, convolutional).
+- **SARIMA**: a classical baseline. The EDA shows a strong daily cycle for square 5161 (STL seasonal strength 0.858, ACF peaks at lag 144), which seasonal terms can describe directly [2]. Limitation: the seasonal shape is a fixed number of harmonics, so it cannot adapt to a day that looks different.
+- **LSTM**: a recurrent network on a one-day window, as in [3]. Limitation: it has to learn the daily shape from about 6,500 training points per square.
+- **TCN**: a dilated convolutional network. The ACF of square 5161 is still 0.77 at lag 288 and 0.74 at lag 432, and the TCN used here has a receptive field of 253 steps, longer than the 144-step input window [5]. Limitation: it took longer to train than the LSTM on two of the three squares (see Results), although it has fewer parameters (9,185 against 18,241).
 
-## Input representation, preprocessing, and training/tuning strategy
+## Input representation, preprocessing and training
 
-**Common setup (all 3 models, all applied per square independently — one model instance per (model, square) pair, 9 total):**
-- Target: 10-minute Internet traffic, one square at a time.
-- Train range: `2013-11-01` -> `2013-12-15` (before the test week). Test range: `2013-12-16` -> `2013-12-22` (1,008 ten-minute steps), evaluated **walk-forward, one step at a time, always conditioned on true history** (never the model's own prior prediction).
-- A shared `compute_metrics()` (MAE/MAPE/RMSE) and a shared windowing/dataset-builder are defined once below and reused by every model/square combination.
+**Common setup.** One model per model type and square (9 in total). Training data is Nov 1 – Dec 15; the test week is Dec 16–22 (1,008 ten-minute steps), evaluated walk-forward one step at a time, always from true past values and never from the model's own predictions. The SARIMA settings are chosen for each square by AIC on the training data. The LSTM and TCN settings are chosen on square 5161 only, using Dec 1–15 as a validation set that the search never trains on, and are then reused for the other two squares. `compute_metrics()` (MAE, MAPE, RMSE), the windowing functions and the training and search functions are defined once and used for every model and square.
 
-**SARIMA.** Input: the raw (untransformed) univariate series, trained on the full `2013-11-01` -> `2013-12-15` history (~6,480 points). Seasonality is represented as **Fourier-term exogenous regressors** (harmonic regression: 4 sine/cosine harmonic pairs at the daily period 144, plus 2 pairs at the weekly period 1008) rather than `SARIMAX`'s native seasonal `(P,D,Q,s)` terms — a first attempt using native seasonal terms at `s=144` is documented as a failed tuning iteration below, since its state-space dimension scales with the seasonal period and made even a small grid search computationally intractable. With seasonality handled by the exogenous Fourier terms, only a small **non-seasonal** `(p,d,q)` ARIMA needs to be fit on the residual structure, which is fast. Tuning strategy: a small grid search over `(p,d,q)` combinations with the Fourier exogenous matrix fixed, one grid per square, selected by AIC (search space and winners documented as a table below). Walk-forward evaluation then uses `SARIMAXResults.append(obs, exog=..., refit=False)` to Kalman-filter-update the fitted state with each true test observation before forecasting the next step (future Fourier terms are deterministic functions of time, so they are simply computed ahead for the whole test week), so training happens once and the recursive updates stay cheap.
+**SARIMA.** The input is the raw series (about 6,480 training points per square). Seasonality enters through Fourier terms used as exogenous regressors (harmonics at the daily period of 144 steps and at the weekly period of 1,008) together with a non-seasonal `(p,d,q)` ARIMA, so this is a regression with ARIMA errors rather than a `SARIMAX` model with seasonal orders. I still call it SARIMA. The version with seasonal orders was too slow (see iteration 1 below). The number of harmonics and the ARIMA order are chosen by AIC in two stages (see iteration 2). In the walk-forward evaluation the fitted model is updated with each true observation using `append(..., refit=False)` and then forecasts the next step. The Fourier terms only depend on time, so they are computed for the whole test week in advance.
 
-**LSTM.** Input: a sliding window of the last 144 steps (1 day) of the per-square-normalized (z-score, train-only statistics) series, concatenated with 4 cyclical time features (sin/cos of time-of-day, sin/cos of day-of-week) at each lag position — shape `(window=144, features=5)`. A single-layer `nn.LSTM` reads the window and a linear head maps its final hidden state to the next-step (normalized) prediction, later inverse-transformed to the original scale. Tuning strategy: a small grid search (hidden size x learning rate) run on the top-1 square as a representative case, selected by validation loss on a held-out tail of the training range, then reused (with separately trained weights) for all three squares — documented as a search-space table below. **Limitation:** a single-layer LSTM with a fixed, modest hidden size has limited capacity to represent sharp, high-amplitude daily peaks (see the discussion of square 5161 below) and, being recurrent, processes the 144-step window sequentially rather than in parallel, making it slower to train than the TCN despite having far fewer parameters.
+**LSTM.** The input is a window of the previous steps (the window length is one of the searched settings, see the tuning log). Each step has 5 features: the traffic value, z-scored with the mean and standard deviation of that square, and sin/cos of the time of day and of the day of week. During the search the mean and standard deviation come from November only; for the final models they come from Nov 1 – Dec 15. A recurrent layer (`nn.LSTM`, number of layers searched) followed by a linear layer on the last hidden state predicts the next normalized value, which is converted back to the original scale. Training uses Adam, MSE loss, batch size 64 and 20 epochs. Hidden size, learning rate, number of layers and window length come from the grid search.
 
-**TCN.** Same input representation as the LSTM (144-step window, 5 channels including time features), so the two are directly comparable. Implemented by hand as a stack of residual **dilated causal convolution** blocks ([5]): dilations `1, 2, 4, 8, 16, 32`, kernel size 3, weight-normalized `Conv1d` layers, ReLU, dropout, and a residual connection per block (1x1 conv when channel counts differ), followed by a linear head on the final timestep's feature vector. Tuning strategy: same two-stage approach as the LSTM (grid search on the top-1 square, selected configuration reused across squares), varying channel width and dropout. **Limitation:** the stacked residual convolution blocks give TCN a large parameter count relative to the single-layer LSTM, which is reflected in its substantially higher training cost (see Results); a wide receptive field is also not automatically useful for a target with a fast-decaying autocorrelation structure, so its extra capacity is a genuine bet on the long-range dependence finding from [4]/[5] rather than a guaranteed win.
+**TCN.** Same input as the LSTM. Written from scratch in PyTorch: 6 residual blocks with dilations 1, 2, 4, 8, 16, 32, weight-normalized causal convolutions, ReLU and dropout, a 1×1 convolution on the skip path when the number of channels changes, and a linear layer on the last time step [5]. Training is the same as for the LSTM (Adam, MSE loss, batch size 64, 20 epochs). Channels per block, dropout, kernel size and learning rate come from the grid search.
 
-**Timing methodology.** All training/inference timings reported in Results and Discussion are **single, unrepeated measurements** (one `Timer()` call per model/square combination) using Python's `time.perf_counter()`, not averaged across multiple trials. This keeps total notebook runtime manageable but means the reported seconds carry some measurement noise (OS scheduling, background load) rather than being statistically robust estimates - they should be read as order-of-magnitude comparisons between models, not precise benchmarks. Hardware is fixed for the whole notebook (see the printed hardware info above) and is the same for every model, so relative comparisons between models remain fair.
+**Timing.** Each training and inference time is a single measurement (`time.perf_counter()`, one run per model and square), not an average over repeated runs. They change noticeably between runs and even within a run: in the latest run the LSTM took about 61 s on two squares and 312 s on the third with the same model and epochs. Only large differences are therefore meaningful. All runs used the same CPU (see the hardware line under the timing table).
 
 ## Model 1: SARIMA
 
 
-**Tuning log, iteration 1 (failed, kept for transparency).** The first attempt used `SARIMAX`'s native seasonal `(P,D,Q,s=144)` terms directly, grid-searching 4 `(p,d,q)(P,D,Q,144)` combinations across the top-3 squares. **Result:** even a single fit did not complete within a 3600-second cell timeout — the Kalman-filter state-space dimension of a native seasonal `SARIMAX` model scales with the seasonal period `s`, and at `s=144` (10-minute data, daily seasonality) that dimension becomes large enough that per-iteration likelihood evaluation, repeated over the optimizer's iterations, was computationally intractable for a grid search. **Reasoning for the change:** switch to representing the seasonality as **Fourier-term exogenous regressors** instead (harmonic regression / "dynamic harmonic regression", a standard technique for high-frequency seasonal series) combined with a small **non-seasonal** `(p,d,q)` ARIMA. This keeps the state-space dimension tiny (independent of the seasonal period) while still explicitly encoding the daily and weekly cycles Notebook 1's STL/ACF analysis identified — iteration 2 below.
+**Tuning log, iteration 1 (failed).** I first used the seasonal terms of `SARIMAX` directly, `(P,D,Q,s=144)`, with a grid of 4 `(p,d,q)(P,D,Q,144)` combinations for each of the three squares, fitted on the last 3 weeks before the test week. The cell had not finished after 3,600 s, when the timeout stopped it. The state-space size of a seasonal `SARIMAX` grows with the seasonal period, and at `s=144` the fits were too slow for a grid search. I did not measure how long a single fit takes. **Change:** model the seasonality with Fourier terms as exogenous regressors (dynamic harmonic regression) and fit only a non-seasonal `(p,d,q)`, so the state space no longer depends on `s`.
 
-**Tuning log, iteration 2 (used).** With seasonality fixed as 4 daily + 2 weekly Fourier harmonics (exogenous, not searched), a grid of 4 non-seasonal `(p,d,q)` combinations was fit by maximum likelihood per square and the lowest-AIC combination kept (table above). Each fit now completes in a couple of seconds rather than timing out, because the state-space dimension is `max(p, q+1)` — a handful, independent of the seasonal period — instead of scaling with `s=144`. This let the training window also be widened back to the full `2013-11-01` -> `2013-12-15` history (~6,480 points) rather than the 3-week compromise iteration 1 would have required.
+**Tuning log, iteration 2 (used).** The search has two stages per square, both by AIC on the Nov 1 – Dec 15 training data (table below). Stage 1 fixes the ARIMA order at `(2,1,1)` and varies the number of harmonics: 2, 4, 6 or 8 daily and 2, 4 or 6 weekly (12 fits). More harmonics lowered the AIC on all three squares compared with the 4 daily and 2 weekly harmonics I used first (by about 56 on 5161, 156 on 5059 and 378 on 5259). The best combination was 6 daily and 6 weekly harmonics for 5059 and 8 daily and 6 weekly for 5161 and 5259. These values are at the edge of the grid, so more harmonics might fit even better; I did not test this. Stage 2 keeps the best harmonics and compares the ARIMA orders `(1,0,0)`, `(2,0,0)`, `(1,0,1)` and `(2,1,1)`; `(2,1,1)` had the lowest AIC on all three squares. Each fit took a few seconds, so the full Nov 1 – Dec 15 history (about 6,480 points) could be used instead of the 3 weeks used in iteration 1.
+
+**SARIMA stage 1: AIC for the number of harmonics (ARIMA order (2,1,1)):**
+
+| Square   | Daily harmonics   |   2 weekly harmonics |   4 weekly harmonics |   6 weekly harmonics |
+|:---------|:------------------|---------------------:|---------------------:|---------------------:|
+| 5059     | 2                 |              86101.8 |              86107.4 |              86089.2 |
+| 5059     | 4                 |              86000.7 |              86005.7 |              85979.1 |
+| 5059     | 6                 |              85871.0 |              85875.3 |              85844.4 |
+| 5059     | 8                 |              85873.2 |              85877.5 |              85846.5 |
+| 5161     | 2                 |              88119.2 |              88126.5 |              88105.7 |
+| 5161     | 4                 |              88020.8 |              88028.0 |              88003.4 |
+| 5161     | 6                 |              87989.0 |              87996.2 |              87970.1 |
+| 5161     | 8                 |              87983.6 |              87990.8 |              87964.3 |
+| 5259     | 2                 |              83261.5 |              83265.6 |              83059.3 |
+| 5259     | 4                 |              82997.4 |              83000.1 |              82851.2 |
+| 5259     | 6                 |              82840.1 |              82842.4 |              82679.0 |
+| 5259     | 8                 |              82786.5 |              82788.6 |              82619.2 |
 
 
-**SARIMA grid search (final, Fourier-term approach) - AIC by (p,d,q), per square:**
+**SARIMA stage 2: AIC for the ARIMA order, with the best harmonics of stage 1:**
 
-
-|   square_id | order           |       aic |   fit_seconds |
-|------------:|:----------------|----------:|--------------:|
-|        5161 | (1,0,0)+Fourier | 89445.905 |         1.570 |
-|        5161 | (2,0,0)+Fourier | 88457.342 |         1.810 |
-|        5161 | (1,0,1)+Fourier | 88054.300 |         1.930 |
-|        5161 | (2,1,1)+Fourier | 88020.777 |         1.760 |
-|        5059 | (1,0,0)+Fourier | 87815.817 |         2.310 |
-|        5059 | (2,0,0)+Fourier | 86651.772 |         2.260 |
-|        5059 | (1,0,1)+Fourier | 86046.054 |         2.280 |
-|        5059 | (2,1,1)+Fourier | 86000.711 |         2.000 |
-|        5259 | (1,0,0)+Fourier | 83710.212 |         2.100 |
-|        5259 | (2,0,0)+Fourier | 83093.456 |         1.930 |
-|        5259 | (1,0,1)+Fourier | 83071.413 |         1.420 |
-|        5259 | (2,1,1)+Fourier | 82997.388 |         2.870 |
+| Square   | Daily harmonics   | Weekly harmonics   | ARIMA order   |     AIC | Selected   |
+|:---------|:------------------|:-------------------|:--------------|--------:|:-----------|
+| 5059     | 6                 | 6                  | (2,1,1)       | 85844.4 | yes        |
+| 5059     | 6                 | 6                  | (1,0,1)       | 85918.8 |            |
+| 5059     | 6                 | 6                  | (2,0,0)       | 86629.9 |            |
+| 5059     | 6                 | 6                  | (1,0,0)       | 87820.1 |            |
+| 5161     | 8                 | 6                  | (2,1,1)       | 87964.3 | yes        |
+| 5161     | 8                 | 6                  | (1,0,1)       | 87995.4 |            |
+| 5161     | 8                 | 6                  | (2,0,0)       | 88446.8 |            |
+| 5161     | 8                 | 6                  | (1,0,0)       | 89457.9 |            |
+| 5259     | 8                 | 6                  | (2,1,1)       | 82619.2 | yes        |
+| 5259     | 8                 | 6                  | (1,0,1)       | 82687.7 |            |
+| 5259     | 8                 | 6                  | (2,0,0)       | 82798.4 |            |
+| 5259     | 8                 | 6                  | (1,0,0)       | 83570.4 |            |
 
 
 ## Model 2: LSTM
 
 
-**Tuning log.** Four `(hidden_size, learning_rate)` combinations were trained for 5 epochs on the top-1 square's November-only training slice and scored on a held-out December 1-15 validation slice (table above); the configuration with the lowest validation MSE was kept and reused — with separately trained weights — for all three squares' final models below, each trained for **20 epochs** (vs. 5 during search) on the **full Nov 1 - Dec 15 history** (vs. the November-only slice during search). Note this means the winning hyperparameters were never re-validated at the final training scale; they are carried over on the assumption that a configuration that generalizes better at 5 epochs on a data subset is also a reasonable choice at 20 epochs on the full set, which is a common practical shortcut but not verified here. Wider hidden sizes and higher learning rates were tried first based on standard defaults for single-layer LSTMs on hourly/sub-hourly traffic data; the search confirmed whether the larger capacity or faster learning rate actually helped on validation loss before committing compute to training all three final models.
+**Tuning log, LSTM.** All settings were trained for 20 epochs, the same as in the final training, on square 5161 using November only (with November mean and standard deviation for the normalization) and scored by MSE on Dec 1–15 (table below). Stage 1 varied the hidden size (32, 64, 128) and the learning rate (1e-3, 5e-3) with one layer and a 144-step window. The best was hidden size 64 with learning rate 5e-3 (validation MSE 0.0227). 128 units were slightly worse (0.0235 at 1e-3 and 0.0250 at 5e-3) and 32 units clearly worse (0.0259 to 0.0291). Stage 2 kept this setting and changed one thing at a time: two layers (0.0269), a 72-step window (0.0357) and a 288-step window (0.0272) were all worse than one layer with 144 steps, so the setting stays at one layer and a 144-step window. The 288-step window also took about 10 times longer to train (351 s against 36 s). The search uses November only so that December is a real held-out set; the final models are then trained on the whole Nov 1 – Dec 15 period with the selected setting, with separate weights for each square.
+
+**LSTM grid search (square 5161, validation on Dec 1-15):**
+
+| Stage   |   Hidden size |   Learning rate |   Layers |   Window |   Validation MSE |
+|:--------|--------------:|----------------:|---------:|---------:|-----------------:|
+| 1       |            32 |           0.001 |        1 |      144 |           0.0291 |
+| 1       |            32 |           0.005 |        1 |      144 |           0.0259 |
+| 1       |            64 |           0.001 |        1 |      144 |           0.0243 |
+| 1       |            64 |           0.005 |        1 |      144 |           0.0227 |
+| 1       |           128 |           0.001 |        1 |      144 |           0.0235 |
+| 1       |           128 |           0.005 |        1 |      144 |           0.0250 |
+| 2       |            64 |           0.005 |        2 |      144 |           0.0269 |
+| 2       |            64 |           0.005 |        1 |       72 |           0.0357 |
+| 2       |            64 |           0.005 |        1 |      288 |           0.0272 |
 
 
-**LSTM hyperparameter grid search (validation MSE, top-1 square):**
+## Model 3: TCN (dilated causal convolutions, written from scratch)
 
 
-|   hidden_size |    lr |   val_mse |
-|--------------:|------:|----------:|
-|        32.000 | 0.005 |     0.020 |
-|        64.000 | 0.005 |     0.021 |
-|        64.000 | 0.001 |     0.023 |
-|        32.000 | 0.001 |     0.034 |
+**Tuning log, TCN.** The settings were trained for 20 epochs on square 5161 (November only) and scored on Dec 1–15, using the 144-step window selected for the LSTM (table below). Stage 1 varied the channels per block (16, 32) and the dropout (0.1, 0.2) with kernel size 3 and learning rate 1e-3. The best was 16 channels with dropout 0.2 (validation MSE 0.0227). 32 channels with dropout 0.2 was almost the same (0.0228), and dropout 0.1 was worse for both widths (0.0242 and 0.0249). Stage 2 kept 16 channels and dropout 0.2 and changed the kernel size and the learning rate: kernel size 5 (0.0437 at 1e-3 and 0.0381 at 3e-3) and kernel size 3 with learning rate 3e-3 (0.0265) were all worse, so the final setting is kernel size 3 and learning rate 1e-3. The dilations were not tuned; with kernel size 3 they give a receptive field of 253 steps, which covers the 144-step window. One setting (kernel size 5, learning rate 3e-3) took 1,061 s while the others took 83 to 256 s; I did not find out why, background load is a likely cause. The final models are trained on Nov 1 – Dec 15 with this setting, with separate weights for each square. The selected network has 9,185 parameters, against 18,241 for the LSTM.
+
+**TCN grid search (square 5161, validation on Dec 1-15):**
+
+| Stage   |   Channels per block |   Dropout |   Kernel size |   Learning rate |   Validation MSE |
+|:--------|---------------------:|----------:|--------------:|----------------:|-----------------:|
+| 1       |                   16 |       0.1 |             3 |           0.001 |           0.0242 |
+| 1       |                   16 |       0.2 |             3 |           0.001 |           0.0227 |
+| 1       |                   32 |       0.1 |             3 |           0.001 |           0.0249 |
+| 1       |                   32 |       0.2 |             3 |           0.001 |           0.0228 |
+| 2       |                   16 |       0.2 |             5 |           0.001 |           0.0437 |
+| 2       |                   16 |       0.2 |             3 |           0.003 |           0.0265 |
+| 2       |                   16 |       0.2 |             5 |           0.003 |           0.0381 |
 
 
-## Model 3: TCN (hand-implemented, dilated causal convolutions)
-
-
-**Tuning log.** As with the LSTM, four `(channel width, dropout)` configurations were trained for 5 epochs on the top-1 square and scored on the same December validation slice (table above); the winner was reused — with separately trained weights — for all three squares' final models, again trained for **20 epochs on the full Nov 1 - Dec 15 history** rather than the 5-epoch/November-only search conditions (the same carried-over-without-re-validation caveat noted for the LSTM applies here too). Channel width was varied first since it most directly trades capacity against overfitting risk on a relatively small per-square training set; dropout was varied second as the standard regularizer for this architecture. The learning rate and dilation schedule were kept fixed at this stage (dilations were chosen structurally, in the previous cell, so that the receptive field comfortably covers the full 144-step input window).
-
-
-**TCN hyperparameter grid search (validation MSE, top-1 square):**
-
-
-| channels                 |   dropout |   val_mse |
-|:-------------------------|----------:|----------:|
-| [32, 32, 32, 32, 32, 32] |     0.100 |     0.020 |
-| [32, 32, 32, 32, 32, 32] |     0.200 |     0.021 |
-| [16, 16, 16, 16, 16, 16] |     0.100 |     0.027 |
-| [16, 16, 16, 16, 16, 16] |     0.200 |     0.031 |
-
-**Note on walk-forward for LSTM/TCN.** Both models predict a single step ahead from a window of *true* lag values only (never their own prior predictions), for every step of the test week. Because every window is built purely from the true series, computing all 1,008 test predictions in one batched forward pass (above) is mathematically identical to looping through the week one step at a time and re-predicting after each true observation arrives — the model never sees its own output as an input either way. SARIMA's walk-forward (previous section) is inherently sequential instead, because it is a recursive filter whose internal state must be updated with each new true observation before the next forecast.
+**Walk-forward for the LSTM and TCN.** Every input window is built from true past values only, so predicting the whole test week in one batch gives the same result as predicting one step at a time and appending the true value each time. The models never see their own predictions. SARIMA is different: it is a recursive filter, so its state is updated with each true observation before the next forecast (see above).
 
 <div style="page-break-after: always;"></div>
 
@@ -280,179 +306,164 @@ Seasonal-Trend decomposition using LOESS (STL), with a period of 144 (one day at
 ## Square 5161
 
 
-| model   |    MAE |   MAPE |   RMSE |
-|:--------|-------:|-------:|-------:|
-| SARIMA  |  81.93 |   8.51 | 123.58 |
-| LSTM    | 118.34 |  23.18 | 147.41 |
-| TCN     |  97.53 |  11.31 | 140.88 |
-
-
-<div class="figure"><img src="../figures/results_SARIMA_5161.png" style="width:80%;"></div>
+| Model   |   MAE |   MAPE (%) |   RMSE |
+|:--------|------:|-----------:|-------:|
+| SARIMA  | 82.70 |       9.43 | 122.78 |
+| LSTM    | 98.87 |      17.15 | 129.17 |
+| TCN     | 87.92 |       9.98 | 130.90 |
 
 
 
-<div class="figure"><img src="../figures/results_LSTM_5161.png" style="width:80%;"></div>
+<div class="figure"><img src="../figures/results_SARIMA_5161.png" width="400"></div>
 
 
 
-<div class="figure"><img src="../figures/results_TCN_5161.png" style="width:80%;"></div>
+<div class="figure"><img src="../figures/results_LSTM_5161.png" width="400"></div>
+
+
+
+<div class="figure"><img src="../figures/results_TCN_5161.png" width="400"></div>
 
 
 
 ## Square 5059
 
 
-| model   |   MAE |   MAPE |   RMSE |
-|:--------|------:|-------:|-------:|
-| SARIMA  | 70.61 |   7.64 |  97.41 |
-| LSTM    | 70.54 |   7.47 |  97.15 |
-| TCN     | 77.41 |   8.96 | 103.52 |
-
-
-<div class="figure"><img src="../figures/results_SARIMA_5059.png" style="width:80%;"></div>
+| Model   |   MAE |   MAPE (%) |   RMSE |
+|:--------|------:|-----------:|-------:|
+| SARIMA  | 69.54 |       7.67 |  97.82 |
+| LSTM    | 73.58 |       7.85 | 101.36 |
+| TCN     | 78.99 |       9.04 | 106.07 |
 
 
 
-<div class="figure"><img src="../figures/results_LSTM_5059.png" style="width:80%;"></div>
+<div class="figure"><img src="../figures/results_SARIMA_5059.png" width="400"></div>
 
 
 
-<div class="figure"><img src="../figures/results_TCN_5059.png" style="width:80%;"></div>
+<div class="figure"><img src="../figures/results_LSTM_5059.png" width="400"></div>
+
+
+
+<div class="figure"><img src="../figures/results_TCN_5059.png" width="400"></div>
 
 
 
 ## Square 5259
 
 
-| model   |   MAE |   MAPE |   RMSE |
-|:--------|------:|-------:|-------:|
-| SARIMA  | 71.65 |   9.20 |  97.63 |
-| LSTM    | 70.83 |   8.37 | 100.95 |
-| TCN     | 66.94 |   8.26 |  92.84 |
-
-
-<div class="figure"><img src="../figures/results_SARIMA_5259.png" style="width:80%;"></div>
+| Model   |   MAE |   MAPE (%) |   RMSE |
+|:--------|------:|-----------:|-------:|
+| SARIMA  | 68.65 |       9.10 |  92.86 |
+| LSTM    | 71.82 |       9.77 |  96.86 |
+| TCN     | 72.31 |      10.42 |  96.11 |
 
 
 
-<div class="figure"><img src="../figures/results_LSTM_5259.png" style="width:80%;"></div>
+<div class="figure"><img src="../figures/results_SARIMA_5259.png" width="400"></div>
 
 
 
-<div class="figure"><img src="../figures/results_TCN_5259.png" style="width:80%;"></div>
+<div class="figure"><img src="../figures/results_LSTM_5259.png" width="400"></div>
 
 
 
-## Training and inference timing
-
-
-| model   | phase                         |   seconds |
-|:--------|:------------------------------|----------:|
-| LSTM    | train_total_s                 |     33.58 |
-| LSTM    | walkforward_inference_total_s |      0.03 |
-| SARIMA  | train_grid_search_total_s     |      8.08 |
-| SARIMA  | walkforward_inference_total_s |     45.95 |
-| TCN     | train_total_s                 |    514.64 |
-| TCN     | walkforward_inference_total_s |      0.20 |
-
-
-*Hardware: Intel64 Family 6 Model 186 Stepping 2, GenuineIntel, CPU only (no GPU detected). Each value is a **single, unrepeated measurement** per model/square (see the Timing methodology note in Methodology above), averaged only across the 3 squares for display here - not across repeated trials. SARIMA's walk-forward inference is a sequential Kalman-filter recursion (1,008 steps), while LSTM/TCN inference is a single batched pass over true-history windows (see the walk-forward equivalence note in Methodology).*
-
-
-**Discussion.** *(Read together with the metrics tables and figures above.)* The three models do **not** rank uniformly across the top-3 squares, and the split lines up closely with Notebook 1's EDA:
-
-- **Square 5161** (the single busiest square, and the one Notebook 1's STL decomposition measured with a high seasonal strength of 0.858) is where **SARIMA wins clearly** (MAE 81.9, MAPE 8.5%, RMSE 123.6) and **LSTM is worst by a wide margin** (MAE 118.3, MAPE 23.2%, RMSE 147.4) — TCN sits in between (MAE 97.5, MAPE 11.3%). This is exactly the pattern [2] reports: an ARIMA-family model is highly competitive, even superior, precisely where the seasonal component dominates.
-- On the two lower-traffic squares (**5059**, **5259**), the neural models are competitive with or beat SARIMA: LSTM edges out SARIMA on 5059 (MAE 70.5 vs 70.6, essentially tied), and **TCN wins outright on 5259** (MAE 66.9, MAPE 8.3%, RMSE 92.8, best of all 9 combinations). This is consistent with [3]/[4] — once the dominant seasonal component is less overwhelming, the extra representational flexibility of a recurrent or convolutional model starts to pay off on the residual, non-seasonal structure instead of hurting.
-- **Training cost is highly asymmetric** (see the timing table): TCN training took 7-10 minutes per square (6 stacked residual blocks at 32 channels, 20 epochs), vs. ~33-34s for LSTM and ~7-9s for the entire SARIMA grid search per square — yet TCN did not dominate on the square with the strongest seasonality. That is a genuine cost/benefit trade-off: the architecturally more expensive model is not uniformly the better choice, which is itself a useful finding to carry into the discussion of [5]'s claims about TCN's general competitiveness with recurrent models — competitive on average, but not automatically superior on every series.
-- Inference cost differs structurally rather than by model quality: SARIMA's walk-forward is inherently sequential (~46s for 1,008 Kalman-filter updates per square) while LSTM/TCN inference is a single batched pass over true-history windows (well under a second per square) — a consequence of SARIMA being a recursive filter and the neural models not needing recursion when every input window is built from true, not predicted, values (see the walk-forward equivalence note above).
-
-
-## Where a model performs poorly
+<div class="figure"><img src="../figures/results_TCN_5259.png" width="400"></div>
 
 
 
-<div class="figure"><img src="../figures/results_worst_case.png" style="width:90%;"></div>
+## Timing
 
 
-**Discussion of the worst case.** The worst (model, square) combination overall by RMSE is **LSTM on square 5161** (RMSE 147.4, MAPE 23.2%) — the same square where SARIMA was the best performer. Within that combination's test week, the single worst day by mean absolute error is **2013-12-17** (mean abs. error ~144.9), which is close to that combination's error for the *whole* week rather than a one-off spike — i.e. this is a case of **persistent underperformance across the test week**, not an isolated anomaly.
+**Time in seconds per square (single run):**
 
-The likely explanation ties directly back to square 5161 being the single highest-traffic, most sharply-peaked square in the dataset (Notebook 1's STL decomposition measured its seasonal strength at 0.858, the highest of the three). The LSTM hyperparameters (hidden size 32, selected by the grid search run on this very square) may simply lack the capacity to track the sharpness of this square's daily peak-to-trough swing as precisely as SARIMA's explicit Fourier-term seasonal representation does — the LSTM has to *learn* the daily shape from data, while SARIMA is handed it directly as a deterministic regressor. This is a concrete instance of finding [2]'s general claim (ARIMA competitive when seasonality is strong) rather than a data quality issue or an evaluation artifact: the same LSTM configuration performs well on the other two, less sharply-seasonal squares, so the failure is square-specific and pattern-specific, not a bug in the walk-forward procedure itself.
+| Model   | Phase                        |   5161 |   5059 |   5259 |
+|:--------|:-----------------------------|-------:|-------:|-------:|
+| SARIMA  | grid search (15 fits)        |   47.1 |   65.7 |   63.6 |
+| SARIMA  | inference over the test week |   54.9 |   52.6 |   52.0 |
+| LSTM    | training (20 epochs)         |   60.8 |   61.7 |  311.5 |
+| LSTM    | inference over the test week |   0.06 |   0.07 |   0.09 |
+| TCN     | training (20 epochs)         |  130.4 |  113.0 |  121.3 |
+| TCN     | inference over the test week |   0.10 |   0.09 |   0.09 |
+
+
+
+Hardware: Intel64 Family 6 Model 186 Stepping 2, GenuineIntel, 7.7 GB RAM, CPU (no GPU used).
+
+
+
+**STL seasonal strength (period 144, full Nov 1 - Jan 1 series):**
+
+| Square   |   Seasonal strength |
+|:---------|--------------------:|
+| 5161     |               0.858 |
+| 5059     |               0.891 |
+| 5259     |               0.497 |
+
+
+**Discussion.** SARIMA is the best model on all three squares by MAE, MAPE and RMSE, but not by a large margin: on each square the MAE of the best neural model is only 4.6% to 6.3% higher than SARIMA's.
+
+- **5161:** SARIMA (MAE 82.7, MAPE 9.4%, RMSE 122.8) is followed by the TCN (87.9, 10.0%, 130.9) and the LSTM (98.9, 17.2%, 129.2). The LSTM has the worst MAE and MAPE but a lower RMSE than the TCN.
+- **5059:** SARIMA (69.5, 7.7%, 97.8), then the LSTM (73.6, 7.9%, 101.4) and the TCN (79.0, 9.0%, 106.1).
+- **5259:** SARIMA (68.7, 9.1%, 92.9), then the LSTM (71.8, 9.8%, 96.9) and the TCN (72.3, 10.4%, 96.1). The two neural models are close to each other here.
+
+The STL table above shows that the daily seasonal strength (0.858, 0.891 and 0.497) does not explain these differences: SARIMA leads by a similar amount on all three squares although 5259 has a much weaker daily seasonality. A possible reason is that SARIMA also has weekly Fourier terms, which describe the different weekday and weekend levels of the squares directly (see the time series plots in the EDA); I did not test this. The LSTM's MAPE on 5161 (17.2%) is much higher than its MAE suggests. In the figures the LSTM's predictions for 5161 stay above the actual values in the overnight troughs (roughly 250–300 predicted against 150–200 actual, judged by eye). MAPE divides by the actual value, so these small absolute errors at low traffic raise its MAPE more than its MAE.
+
+This differs from the general result in [2], where the LSTM was better than ARIMA. One possible reason is the small training set here (about 6,300 windows per square), but I did not test that.
+
+**Effect of the tuning.** The results of an earlier run with a smaller search are in the git history. With the earlier fixed harmonics (4 daily and 2 weekly) the SARIMA MAE was 81.9 on 5161, 70.6 on 5059 and 71.7 on 5259. With the searched harmonics it is 82.7, 69.5 and 68.7, so a lower AIC did not always mean a lower test error (5161 got slightly worse). The LSTM setting did not change and its results are identical. The TCN changed from 32 to 16 channels and improved on every square (MAE 97.8 to 87.9 on 5161, 87.6 to 79.0 on 5059 and 72.6 to 72.3 on 5259).
+
+**Training time.** The TCN took 113–130 s per square. The LSTM took 61 to 62 s on 5161 and 5059 and 312 s on 5259 with the same model and epochs (probably background load, which I did not check). The SARIMA search took 47–66 s per square for its 15 fits. These are single runs and vary between runs (see Methodology), so only the order of magnitude is meaningful.
+
+**Inference time.** SARIMA's walk-forward is sequential (1,008 filter updates per square) and took 52–55 s per square. The LSTM and TCN predict the whole week in one batch (under 0.1 s).
+
+
+## Worst case
+
+
+
+<div class="figure"><img src="../figures/results_worst_case.png" width="470"></div>
+
+
+**Worst case.** By RMSE the worst model/square pair is the TCN on square 5161 (RMSE 130.9), and its worst day is Tuesday Dec 17 (mean absolute error 122.3). The plot shows that the prediction follows the daily curve but stays below the actual values around the midday peak (about 12:00 to 17:00), by up to about 500. The actual peak that day (about 3,900) is higher than the peak of the day before (about 3,000, see the Dec 16 part of the TCN plot for 5161). I did not test why the TCN misses this peak.
+
+The LSTM has a lower RMSE on this square (129.2) but a higher MAE and MAPE than the TCN (98.9 and 17.2% against 87.9 and 10.0%). RMSE weights large errors more, so the metrics imply that the TCN's errors are concentrated in fewer, larger misses, like the peak above, while the LSTM makes more small ones, for example in the overnight troughs. I did not analyse the error distributions further.
 
 <div style="page-break-after: always;"></div>
 
 
 # Conclusion and Future Work
 
-**Summary.** No single model dominates across all three squares, and that is itself the main
-finding. SARIMA - the model handed the daily/weekly seasonal shape directly via Fourier terms -
-wins clearly on square 5161, the single highest-traffic square and the one with the strongest
-measured seasonal strength (0.858, from the STL decomposition). On the two lower-traffic, less
-sharply-seasonal squares (5059 and 5259), the neural models are competitive with or beat SARIMA,
-with TCN winning outright on square 5259. This is consistent with [2]'s finding that ARIMA-family
-models are most competitive precisely where seasonality dominates, and it directly answers this
-report's research question: model suitability varies systematically with a square's traffic
-characteristics, specifically its seasonal strength and volatility, not just its traffic volume.
+**Findings.** SARIMA (Fourier terms for the seasonality plus an ARIMA on the residual) was the best model on all three squares by MAE, MAPE and RMSE, but its lead was small: the MAE of the best neural model was 4.6% to 6.3% higher. On square 5161 the LSTM was clearly the weakest model (MAPE 17.2%, against 9.4% for SARIMA and 10.0% for the TCN). On 5059 and 5259 the neural models were within about 1.5 percentage points of SARIMA's MAPE, and on 5259 all three models were close. So the answer to the research question is that the ranking was the same on all three squares, and that what changed between squares was how far the neural models fell behind and which of them came second (the TCN on 5161 by MAE and MAPE, the LSTM on the other two). The cost of SARIMA is comparable to that of the neural models here (47-66 s for its 15-fit search and 52-55 s for the walk-forward, per square, against about 61 s for the LSTM and 113-130 s for the TCN training). This differs from the general result in [2], where the LSTM was better than ARIMA. The small training set (about 6,300 windows per square) is one possible reason, but I did not test it.
 
-**Improvement margins, per model.**
-- **SARIMA** performed strongest overall but only after a real, documented pivot (native seasonal
-  `SARIMAX` at a 144-step period was computationally intractable; Fourier-term regressors fixed
-  it). Remaining headroom: the non-seasonal `(p,d,q)` grid was small (4 candidates) and the
-  Fourier order (4 daily + 2 weekly harmonics) was fixed rather than searched - a wider harmonic
-  order or an explicit outlier/holiday indicator could plausibly improve its worst days further.
-- **LSTM** was competitive on the two less-seasonal squares but clearly worst on the most-seasonal
-  one (MAPE 23.2% on square 5161, vs. 8.5% for SARIMA on the same square). Its hidden size (32)
-  was chosen from a small 4-point grid searched on only 5 epochs; a larger hidden size, more
-  layers, or an attention mechanism over the 144-step window are natural next steps, though the
-  Results section shows this is not guaranteed to help without also addressing the amplitude
-  issue directly (e.g. a loss function weighted toward peak errors).
-- **TCN** had the best single result (square 5259) but at 7-10 minutes of training time per square
-  versus ~34 seconds for LSTM and ~8 seconds for the entire SARIMA grid search - a real cost that
-  did not pay off uniformly. A smaller/narrower architecture, or a shorter dilation schedule sized
-  to the 144-step window instead of the current 6-level schedule (receptive field 253, well beyond
-  the 144-step input), could likely recover most of the accuracy at a fraction of the cost.
+**What the results do not explain.** The daily seasonal strength does not account for the differences between squares (0.858, 0.891 and 0.497 for 5161, 5059 and 5259, while SARIMA's lead is similar on all three). SARIMA's weekly terms may be the reason, since the squares differ strongly between weekdays and weekends, but this was not tested. In the plots the LSTM's predictions on 5161 are too high in the overnight troughs, which hurts its MAPE, and the worst TCN case (Dec 17 on 5161) is an under-prediction of a higher-than-usual midday peak. These are observations from the figures and were not tested further.
 
-**Limitations.** Three are worth being explicit about, since they bound how far these
-conclusions generalize: (1) each model/square combination was trained and timed **once**, not
-averaged over repeated trials, so small performance/timing differences should be read as
-indicative rather than statistically confirmed; (2) LSTM/TCN hyperparameters were searched on a
-5-epoch, single-square, November-only regime and then reused unchanged at the 20-epoch,
-full-history, per-square final training scale, without re-validating that the same configuration
-is still optimal there; (3) each square is modeled independently - no model here exploits spatial
-correlation between neighboring squares, which the underlying grid structure clearly has (visible
-in the top-3 squares' near-identical daily shape in the Exploratory Analysis section).
+**Limitations.**
+- Each model was trained once per square (one seed) and tested on one week, so small differences, for example between the neural models on 5259, should not be over-interpreted. Timings are single measurements and change between runs (in the latest run the LSTM took about 61 s on two squares and 312 s on the third).
+- The LSTM and TCN settings were searched on square 5161 only, and several candidates had almost the same validation MSE (for example 16 and 32 channels for the TCN: 0.0227 and 0.0228). The best SARIMA harmonics were at the edge of the grid.
+- Each square is modeled separately, so no model uses information from neighbouring squares.
 
-**Future work.** The most promising next steps, in order of expected impact relative to effort:
-(a) a spatio-temporal model (e.g. a graph neural network or a CNN over the grid) that shares
-information across neighboring squares, since [4] shows this can meaningfully improve long-term
-mobile traffic forecasts on this same dataset family; (b) repeated-trial timing benchmarks to
-turn the current single-run timing numbers into statistically defensible comparisons; (c)
-re-validating LSTM/TCN hyperparameters at the final training scale rather than carrying over a
-configuration chosen under lighter-weight search conditions; and (d) extending the evaluation
-beyond a single test week to check whether the SARIMA-wins-on-seasonal-squares pattern found here
-holds across different weeks, including ones with holidays or other calendar anomalies.
+**Future work.**
+- Repeat the training with several seeds and other test weeks, including weeks with holidays (the STL trend of 5161 falls sharply right after the test week), to see whether the ranking is stable.
+- Extend the SARIMA harmonic grid beyond 8 daily and 6 weekly harmonics and test day-of-week indicator variables, since the squares behave very differently on weekends.
+- Use neighbouring squares as extra input (a spatio-temporal model as in [4]). The spatial analysis shows that neighbours can behave differently, so the model would have to learn which neighbours matter.
+- Search the LSTM and TCN settings on all three squares instead of only 5161.
 
 <div style="page-break-after: always;"></div>
 
 
 # References
 
-[1] G. Barlacchi, M. De Nadai, R. Larcher, et al., "A multi-source dataset of urban life in
-the city of Milan and the Province of Trentino," *Scientific Data*, vol. 2, no. 150055, 2015.
+[1] G. Barlacchi, M. De Nadai, R. Larcher, et al., "A multi-source dataset of urban life in the city of Milan and the Province of Trentino," *Scientific Data*, vol. 2, no. 150055, 2015.
 
-[2] A. Azari, P. Papapetrou, S. Denic, and G. Peters, "Cellular Traffic Prediction and
-Classification: A Comparative Evaluation of LSTM and ARIMA," in *Proc. 22nd Int. Conf.
-Discovery Science (DS)*, Split, Croatia, 2019, pp. 129-144.
+[2] A. Azari, P. Papapetrou, S. Denic, and G. Peters, "Cellular Traffic Prediction and Classification: A Comparative Evaluation of LSTM and ARIMA," in *Proc. 22nd Int. Conf. Discovery Science (DS)*, Split, Croatia, 2019, pp. 129-144.
 
-[3] W. Wang, C. Zhou, H. He, W. Wu, W. Zhuang, and X. Shen, "Cellular Traffic Load Prediction
-with LSTM and Gaussian Process Regression," in *Proc. IEEE Int. Conf. Commun. (ICC)*,
-Dublin, Ireland, Jun. 2020, pp. 1-6.
+[3] W. Wang, C. Zhou, H. He, W. Wu, W. Zhuang, and X. Shen, "Cellular Traffic Load Prediction with LSTM and Gaussian Process Regression," in *Proc. IEEE Int. Conf. Commun. (ICC)*, Dublin, Ireland, Jun. 2020, pp. 1-6.
 
-[4] C. Zhang and P. Patras, "Long-Term Mobile Traffic Forecasting Using Deep Spatio-Temporal
-Neural Networks," in *Proc. ACM MobiHoc*, Los Angeles, CA, 2018, pp. 231-240.
+[4] C. Zhang and P. Patras, "Long-Term Mobile Traffic Forecasting Using Deep Spatio-Temporal Neural Networks," in *Proc. ACM MobiHoc*, Los Angeles, CA, 2018, pp. 231-240.
 
-[5] S. Bai, J. Z. Kolter, and V. Koltun, "An Empirical Evaluation of Generic Convolutional and
-Recurrent Networks for Sequence Modeling," *arXiv:1803.01271*, 2018.
+[5] S. Bai, J. Z. Kolter, and V. Koltun, "An Empirical Evaluation of Generic Convolutional and Recurrent Networks for Sequence Modeling," *arXiv:1803.01271*, 2018.
 
-[6] Project repository: *[add GitHub URL here]*.
+[6] Project repository: https://github.com/amaliza-shal/Time-Series-Forecasting
 
 [7] Demo video: *[add video link here]*.

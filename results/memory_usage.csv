@@ -1,5 +1,5 @@
 stage,rss_mb,elapsed_s,rss_delta_vs_baseline_mb
-baseline (imports only),196.2,,0.0
-"naive full single-file load (sms-call-internet-mi-2013-11-01.txt, all columns, no chunking)",492.3,7.6,296.1
-"after chunked Pass 1 (ranking scan, all 62 files, 2 cols)",205.9,289.8,9.7
-"after chunked Pass 2 (extraction scan, all 62 files, 3 cols)",222.0,295.7,25.8
+baseline (imports only),204.0,,0.0
+"naive full single-file load (sms-call-internet-mi-2013-11-01.txt, all columns, no chunking)",500.4,3.2,296.4
+"after chunked Pass 1 (ranking scan, all 62 files, 2 cols)",217.6,136.4,13.6
+"after chunked Pass 2 (extraction scan, all 62 files, 3 cols)",232.2,154.8,28.2
