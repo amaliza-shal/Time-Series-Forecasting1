@@ -2,62 +2,51 @@
 
 ## 1. Project Overview
 
-Mobile network operators need short-term traffic forecasts to plan capacity and balance load. This project is an empirical study of one-step-ahead Internet-traffic forecasting on the Telecom Italia "Milan CDR" dataset (telecommunications activity in 10,000 grid squares of Milan, recorded every 10 minutes) [1].
+I compared three forecasting models on mobile Internet traffic from the Telecom Italia Milan dataset (10,000 grid squares, one value every 10 minutes) [1]. The models predict the next 10 minutes of traffic, using only the real past values.
 
 **Research question:** How do different sequential models compare for one-step-ahead mobile network traffic forecasting, and how does their performance vary across geographical areas with different traffic characteristics?
 
-Three model families are implemented, tuned and compared on the three busiest squares: a statistical baseline (SARIMA, implemented as a regression with Fourier seasonal terms and ARIMA errors), a recurrent network (LSTM) and a Temporal Convolutional Network (TCN) written from scratch in PyTorch.
-
-The full write-up (related work, methodology, results and discussion) is in `report/report.pdf` (source: `report/report.md`).
+The models are SARIMA (a statistical model), an LSTM (a recurrent neural network) and a TCN (a convolutional network I wrote myself in PyTorch). I tested them on the three busiest squares. The full write-up is in `report/report.pdf`.
 
 ## 2. Data Window
 
-The raw archive in `data/raw/` covers 2013-11-01 to 2014-01-01 (62 daily files). All exploratory analysis and the ranking of the squares use this full period. Forecasting is evaluated on the assignment week, 2013-12-16 to 2013-12-22 (1,008 ten-minute steps), with models trained on 2013-11-01 to 2013-12-15. These dates are set as constants at the top of `notebooks/02_modeling_and_results.ipynb` (`TRAIN_START`, `TRAIN_END`, `TEST_START`, `TEST_END`).
+The raw data covers 2013-11-01 to 2014-01-01 (62 daily files). I trained on 2013-11-01 to 2013-12-15 and tested on the week 2013-12-16 to 2013-12-22 (1,008 steps).
 
 ## 3. Dataset
 
-Each daily raw file (`data/raw/sms-call-internet-mi-YYYY-MM-DD.txt`) is tab-separated with no header and one row per (square, time interval, country code):
+Each daily file is tab-separated, has no header and has one row per square, time and country code:
 
 ```
 square_id  timestamp_ms  country_code  sms_in  sms_out  call_in  call_out  internet
 ```
 
-A square and interval can appear in several rows (one per country code), and many fields are empty on any given row. A single day has about 4.8 to 5.3 million rows (4,842,625 on Nov 1 and 5,320,759 on Dec 16) and the files are 277 to 376 MB each, 20.8 GB in total. The forecasting target is the `internet` column, summed over the country codes of each (square, interval).
+I forecast the `internet` column, added up over the country codes. A day has about 5 million rows, and the 62 files are 20.8 GB in total.
 
 ## 4. Data Handling & Memory Management
 
-The whole archive does not fit in the 7.7 GB of RAM of the machine used, so `notebooks/01_data_and_eda.ipynb` reads it in two chunked passes (2,000,000 rows per chunk), reading only the columns it needs with smaller dtypes:
+The data is much bigger than the 7.7 GB of RAM on my computer, so I read it in chunks, twice, and only the columns I need:
 
-- **Pass 1 (ranking):** reads 2 columns (`square_id`, `internet`) of every file and keeps a running total for each of the 10,000 squares. This gives the ranking of all squares by total traffic.
-- **Pass 2 (extraction):** reads 3 columns (`square_id`, `timestamp_ms`, `internet`) of every file and keeps only the top-3 squares and squares 4159 and 4556, which are rebuilt as complete 10-minute series (missing intervals filled with 0).
+- **Pass 1:** finds the total traffic of every square, so I can pick the busiest ones.
+- **Pass 2:** keeps only the 5 squares I use (the top 3, plus 4159 and 4556).
 
-Measured evidence (`results/memory_usage.csv` and the size cell of notebook 1, process memory measured with `psutil`):
+What I measured (`results/memory_usage.csv`):
 
-- One day's DataFrame (Nov 1, 4,842,625 rows) is 296 MB with all 8 columns and default dtypes, 37 MB with the Pass 1 columns and dtypes (87% smaller) and 74 MB with the Pass 2 columns (75% smaller).
-- Loading that one day in full raised the process memory (RSS) from 204.0 MB to 500.4 MB (+296.4 MB, 3.2 s).
-- Scanning all 62 files in chunks ended at only +13.6 MB (Pass 1, 136 s) and +28.2 MB (Pass 2, 155 s) above the baseline.
-
-Trade-offs: the data is read twice (about twice the I/O), the chunk size is fixed and RSS is measured after each stage, not at its peak. These memory and timing numbers change from run to run. The details are in the report (Dataset and Data Preparation).
+- One day loaded normally takes 296 MB. With only the columns I need and smaller data types it takes 74 MB (75% less).
+- Loading one day normally added 296 MB of memory. Reading all 62 files in chunks added only 14 MB and 28 MB.
 
 ## 5. Models Implemented and Justification
 
-| # | Model | Notebook section | Justification |
-|---|-------|------------------|---------------|
-| 1 | SARIMA (Fourier terms + ARIMA errors) | `02_modeling_and_results.ipynb`, Model 1 | Classical statistical baseline. The exploratory analysis shows a strong daily and weekly cycle (ACF 0.878 at lag 144 and 0.838 at lag 1008 for square 5161). The seasonality is modeled with sin/cos regressors instead of seasonal orders, because `SARIMAX` with seasonal period 144 was too slow to tune. |
-| 2 | LSTM | `02_modeling_and_results.ipynb`, Model 2 | Recurrent network on a one-day window with time-of-day and day-of-week features; a standard model in the cellular traffic literature. |
-| 3 | TCN | `02_modeling_and_results.ipynb`, Model 3 | Dilated causal convolutions with residual connections, structurally different from both SARIMA and the LSTM (non-recurrent, receptive field of 253 steps). |
+| Model | Why I chose it |
+|-------|----------------|
+| SARIMA | A simple statistical baseline. The traffic has a very strong daily and weekly cycle, which it can model directly. |
+| LSTM | A standard neural network for time series, also used in earlier work on mobile traffic (see the report). |
+| TCN | A different kind of network (convolutions instead of recurrence), so the comparison covers three model types. |
 
-The full justification, tied to the exploratory analysis and the literature, is in the report (Related Work and Methodology).
+The reasons in detail, with the literature, are in the report.
 
 ## 6. Installation & Setup
 
-### Prerequisites
-
-- Python 3.11 (used for development)
-- About 21 GB of free disk for the raw archive; 8 GB of RAM recommended (the run used 7.7 GB)
-- No GPU needed: everything runs on the CPU
-
-### Setup
+You need Python 3.11, about 21 GB of free disk for the raw data and 8 GB of RAM. No GPU is needed.
 
 ```bash
 git clone https://github.com/amaliza-shal/Time-Series-Forecasting1
@@ -68,29 +57,27 @@ pip install -r requirements.txt
 python -m ipykernel install --user --name ts-forecasting --display-name "ts-forecasting"
 ```
 
-Place the raw daily files (`sms-call-internet-mi-YYYY-MM-DD.txt`) in `data/raw/`. The dataset is available from the Harvard Dataverse (references [2] and [3] below); a short download form is required. `data/` is not tracked by git.
+Put the raw files (`sms-call-internet-mi-YYYY-MM-DD.txt`) in `data/raw/`. Download them from the Harvard Dataverse (references [2] and [3]); a short form is required. The `data/` folder is not on GitHub.
 
 ## 7. How to Run the Pipeline
 
-The pipeline is 2 notebooks, run in order. Notebook 2 reads only the files written by notebook 1, never the raw files. There is no separate script: each notebook defines its own helper functions. Run them from Jupyter or headlessly:
+Run the two notebooks in order:
 
 ```bash
 jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=7200 --ExecutePreprocessor.kernel_name=ts-forecasting notebooks/01_data_and_eda.ipynb
 jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=7200 --ExecutePreprocessor.kernel_name=ts-forecasting notebooks/02_modeling_and_results.ipynb
 ```
 
-| Stage | Notebook | Produces |
-|-------|----------|----------|
-| 1. Data and EDA | `01_data_and_eda.ipynb` | `data/processed/timeseries_selected_squares.parquet`, `results/{square_ranking, memory_usage, stl_strength_top1, adf_test_top1}.csv`, `figures/eda_*.png` (6 figures) |
-| 2. Modeling and results | `02_modeling_and_results.ipynb` | `results/{sarima, lstm, tcn}_grid_search.csv`, `results/metrics_square_{5161, 5059, 5259}.csv`, `results/timing.csv`, `figures/results_*.png` (9 actual-vs-predicted plots, a 3x3 grid and the worst-case plot) |
+| Notebook | What it does | Time |
+|----------|--------------|------|
+| `01_data_and_eda.ipynb` | Loads the data, ranks the squares, makes the exploratory plots | about 10 minutes |
+| `02_modeling_and_results.ipynb` | Tunes and tests the 3 models, makes the results tables and plots | about 1 hour |
 
-Notebook 1 takes about 10 minutes (it reads the 20.8 GB twice). Notebook 2 took about an hour on the CPU, mostly the LSTM and TCN grid searches and training.
-
-Do not run a notebook while another program (for example VS Code) has it open with unsaved changes, and do not run both notebooks at the same time: the notebooks overwrite the files in `results/` and `figures/`, and saving an older copy of a notebook from an editor would overwrite a finished run. The numbers quoted in the report (memory, timings and everything derived from them) belong to one particular run.
+Notebook 2 only needs the files that notebook 1 saves. Do not run both at the same time, because they write to the same `results/` and `figures/` folders.
 
 ## 8. Results Summary
 
-See `results/` for the tables and `report/report.pdf` for the write-up. One-step-ahead errors over Dec 16-22, 2013 (walk-forward, one model per square):
+Errors on the test week (Dec 16-22, 2013), one model per square. Lower is better:
 
 | Square | Model | MAE | MAPE (%) | RMSE |
 |--------|-------|-----|----------|------|
@@ -104,29 +91,34 @@ See `results/` for the tables and `report/report.pdf` for the write-up. One-step
 | 5259 | LSTM | 71.8 | 9.8 | 96.9 |
 | 5259 | TCN | 72.3 | 10.4 | 96.1 |
 
-Headline findings: SARIMA is the best model on all three squares by MAE, MAPE and RMSE, but not by a large margin (the MAE of the best neural model is 4.6% to 6.3% higher). The LSTM is the weakest model on square 5161 (MAPE 17.2%, against 9.4% for SARIMA), with predictions above the actual values in the overnight troughs (judged from the plots). The worst case overall is the TCN on square 5161 on Tue Dec 17, where it under-predicts the midday peak. The daily seasonal strength (0.858, 0.891 and 0.497 for the three squares) does not explain the differences between squares. The explanations are given, with their limits, in the report (Results and Discussion, Conclusion).
+- SARIMA was the best model on all three squares, but only by a small margin (the best neural model had a 4.6% to 6.3% higher MAE).
+- The LSTM was the weakest on square 5161 (MAPE 17.2%, against 9.4% for SARIMA).
+- The biggest single failure was the TCN on square 5161 on Tuesday Dec 17: it predicted the midday peak too low.
+
+**What I ran into and learned**
+
+- **The SARIMA I planned was too slow.** SARIMA with a daily cycle of 144 steps did not finish after one hour. I replaced the seasonal part with sine and cosine terms, and it then took only a few seconds per fit.
+- **My first tuning was too quick to trust.** I first tuned the neural networks with only 5 training rounds, and this made a different model the best on one square. I repeated it with the same 20 rounds as the final training.
+- **Timings are noisy.** The same LSTM took about 61 s on two squares and 312 s on the third, so I only trust large differences.
+- **I expected the neural networks to win, but they did not.** The simpler model was best, and I could not explain the differences between squares by the strength of the daily cycle. The report says which explanations I tested and which I did not.
 
 ## 9. Repository Structure
 
 ```
 ├── data/
-│   ├── raw/               # daily CDR files (gitignored, see section 3)
-│   └── processed/         # timeseries_selected_squares.parquet (gitignored, regenerate with notebook 1)
-├── notebooks/             # the 2-notebook pipeline (run in order 01 -> 02)
-│   ├── 01_data_and_eda.ipynb
-│   └── 02_modeling_and_results.ipynb
-├── figures/               # all plots produced by the notebooks
-├── results/               # all tables produced by the notebooks
-├── report/                # report.md (source), report.pdf and report.html (rendered from it)
+│   ├── raw/          # daily CDR files (not on GitHub)
+│   └── processed/    # series written by notebook 1 (not on GitHub)
+├── notebooks/        # 01_data_and_eda.ipynb, 02_modeling_and_results.ipynb
+├── figures/          # all plots
+├── results/          # all tables
+├── report/           # report.pdf (final), report.md, report.html
 ├── requirements.txt
-├── .gitignore
-├── .gitattributes
 └── README.md
 ```
 
 ## 10. Reproducibility
 
-The random seed is fixed (`SEED = 42`) for NumPy and PyTorch, and the PyTorch seed is set again before each model is built. Training runs on the CPU with fixed data windows. In practice the LSTM results were identical (to all digits) in repeated runs on the same machine, and SARIMA is deterministic given the data. Timings and memory numbers vary from run to run and are single measurements. TensorFlow and XGBoost are not used.
+I fixed the random seed (42) for NumPy and PyTorch. Running the notebooks again gave the same errors for the LSTM and SARIMA. Timings and memory numbers change every run, so the ones in the report come from one run.
 
 ## 11. References
 
