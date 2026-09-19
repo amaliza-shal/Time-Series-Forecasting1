@@ -464,6 +464,6 @@ The LSTM has a lower RMSE on this square (129.2) but a higher MAE and MAPE than 
 
 [5] S. Bai, J. Z. Kolter, and V. Koltun, "An Empirical Evaluation of Generic Convolutional and Recurrent Networks for Sequence Modeling," *arXiv:1803.01271*, 2018.
 
-[6] Project repository: https://github.com/amaliza-shal/Time-Series-Forecasting
+[6] Project repository: https://github.com/amaliza-shal/Time-Series-Forecasting1
 
 [7] Demo video: *[add video link here]*.
