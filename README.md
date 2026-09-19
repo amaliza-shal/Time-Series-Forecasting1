@@ -138,6 +138,6 @@ The random seed is fixed (`SEED = 42`) for NumPy and PyTorch, and the PyTorch se
 
 ## 12. Author and Date
 
-Author: amaliza-shal (GitHub account)
+Author: Amaliza Shalom
 Date: September 2026
-Assignment: Comparative Analysis of Sequential Models for Mobile Network Traffic Forecasting
+Course/Assignment: Machine Learning Techniques — Comparative Analysis of Sequential Models for Mobile Network Traffic Forecasting
