@@ -1,4 +1,4 @@
-# Comparative Analysis of Sequential Models for Mobile Network Traffic Forecasting
+# Mobile Network Traffic Forecasting Analysis.
 
 ## 1. Project Overview
 
