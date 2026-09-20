@@ -133,5 +133,11 @@ I fixed the random seed (42) for NumPy and PyTorch. Running the notebooks again 
 ## 12. Author and Date
 
 Author: Amaliza Shalom
+
 Date: September 2026
+
 Course/Assignment: Machine Learning Techniques — Comparative Analysis of Sequential Models for Mobile Network Traffic Forecasting
+
+Video Link: https://www.awesomescreenshot.com/video/56694127?key=838092b6bca35d22b93c82fedcacb78f
+
+
